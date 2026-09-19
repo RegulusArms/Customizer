@@ -1,0 +1,6 @@
+{
+  "name": "stlmaker",
+  "private": true,
+  "type": "module",
+  "description": "Standalone die-cut sticker keychain STL generator (static site, no build step)."
+}

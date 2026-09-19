@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keychain Customizer</title>
+<script>
+  // set the theme before first paint so there's no flash of the wrong palette
+  (function(){
+    var theme = "dark";
+    try{
+      var saved = localStorage.getItem("gripCustomizerTheme");
+      if (saved === "light" || saved === "dark") theme = saved;
+    }catch(e){ /* ignore */ }
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto&family=Montserrat&family=Oswald&family=Bebas+Neue&family=Anton&family=Playfair+Display&family=Merriweather&family=Cinzel&family=Roboto+Mono&family=Dancing+Script&family=Pacifico&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --panel-bg:#ffffff;
+    --panel-border:#e2e2e7;
+    --accent:#3b82f6;
+    --text:#1f2430;
+    --muted:#6b7280;
+    --bg:#f4f5f7;
+    --surface:#ffffff;
+    --hover-bg:#f2f3f5;
+    --accent-tint:#eaf1fe;
+    --dropzone-hover-bg:#f7f9fc;
+    --dropzone-hover-border:#c7cbd4;
+    --dropdown-shadow:rgba(0,0,0,.14);
+    --stage-shadow-1:rgba(0,0,0,.12);
+    --stage-shadow-2:rgba(0,0,0,.08);
+    --danger:#c0392b;
+    --stage-bg:#ffffff;
+    --stage-checker:#e6e6ea;
+  }
+  html[data-theme="dark"]{
+    --panel-bg:#1c1f26;
+    --panel-border:#33363f;
+    --accent:#5b9dff;
+    --text:#e7e9ee;
+    --muted:#9aa0ac;
+    --bg:#111318;
+    --surface:#20232b;
+    --hover-bg:#2a2d36;
+    --accent-tint:#1d2c46;
+    --dropzone-hover-bg:#262a33;
+    --dropzone-hover-border:#454a56;
+    --dropdown-shadow:rgba(0,0,0,.5);
+    --stage-shadow-1:rgba(0,0,0,.4);
+    --stage-shadow-2:rgba(0,0,0,.3);
+    --danger:#e0685a;
+    --stage-bg:#2b2e35;
+    --stage-checker:#363a43;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;
+    height:100%;
+    background:var(--bg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--text);
+  }
+  select, textarea, input[type="number"], input[type="text"]{
+    background:var(--surface);
+    color:var(--text);
+  }
+  body{
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+  }
+  .menubar{
+    flex:0 0 auto;
+    display:flex;
+    align-items:center;
+    height:36px;
+    background:var(--panel-bg);
+    border-bottom:1px solid var(--panel-border);
+    padding:0 6px;
+    font-size:13px;
+    position:relative;
+    z-index:100;
+    user-select:none;
+  }
+  .menu{ position:relative; }
+  .menu-btn{
+    display:block;
+    padding:6px 12px;
+    border:none;
+    border-radius:6px;
+    cursor:pointer;
+    background:transparent;
+    color:var(--text);
+    font:inherit;
+  }
+  .menu-btn:hover, .menu.open .menu-btn{ background:var(--hover-bg); }
+  .menu-btn:disabled{ opacity:.4; cursor:not-allowed; background:transparent; }
+  .theme-toggle-btn, .home-link-btn{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:30px;
+    height:30px;
+    padding:0;
+    color:var(--muted);
+    text-decoration:none;
+  }
+  .home-link-btn{ margin-left:auto; }
+  .home-link-btn + .theme-toggle-btn{ margin-left:2px; }
+  .theme-toggle-btn svg, .home-link-btn svg{ width:17px; height:17px; }
+  .menu-dropdown{
+    display:none;
+    position:absolute;
+    top:100%;
+    left:0;
+    margin-top:2px;
+    min-width:200px;
+    background:var(--surface);
+    border:1px solid var(--panel-border);
+    border-radius:8px;
+    box-shadow:0 4px 16px var(--dropdown-shadow);
+    padding:6px;
+  }
+  .menu.open .menu-dropdown{ display:block; }
+  .menu-item{
+    padding:8px 10px;
+    border-radius:6px;
+    cursor:pointer;
+    font-size:13px;
+    white-space:nowrap;
+  }
+  .menu-item:hover{ background:var(--hover-bg); }
+  .app{
+    display:flex;
+    flex:1 1 auto;
+    min-height:0;
+    align-items:stretch;
+  }
+  .site-footer{
+    flex:0 0 auto;
+    text-align:center;
+    padding:6px 12px;
+    font-size:11px;
+    color:var(--muted);
+    background:var(--panel-bg);
+    border-top:1px solid var(--panel-border);
+  }
+  .site-footer a{ color:var(--muted); text-decoration:underline; }
+  .site-footer a:hover{ color:var(--accent); }
+  .panel{
+    width:300px;
+    flex:0 0 300px;
+    background:var(--panel-bg);
+    border-right:1px solid var(--panel-border);
+    padding:20px 18px;
+    overflow-y:auto;
+    min-height:0;
+  }
+  .panel-right{ border-right:none; border-left:1px solid var(--panel-border); }
+  .panel h1{ font-size:17px; margin:0 0 4px; }
+  .panel h2{ font-size:13.5px; margin:0 0 10px; }
+  .panel .sub{ font-size:12.5px; color:var(--muted); margin:0 0 20px; }
+  .field{ margin-bottom:18px; }
+  .field label{
+    display:block;
+    font-size:12.5px;
+    font-weight:600;
+    margin-bottom:6px;
+    color:var(--text);
+  }
+  .field label .val{ font-weight:400; color:var(--muted); }
+  .field .row{ display:flex; align-items:center; gap:8px; }
+  input[type="range"]{ flex:1 1 auto; width:100%; accent-color:var(--accent); }
+  .dropzone{
+    border:2px dashed var(--panel-border);
+    border-radius:8px;
+    padding:18px 10px;
+    text-align:center;
+    font-size:12.5px;
+    color:var(--muted);
+    cursor:pointer;
+    transition:background .12s ease, border-color .12s ease;
+  }
+  .dropzone:hover{ background:var(--dropzone-hover-bg); border-color:var(--dropzone-hover-border); }
+  .dropzone.dragover{ background:var(--accent-tint); border-color:var(--accent); color:var(--text); }
+  .dropzone strong{ color:var(--text); }
+  .btn{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:6px;
+    border:1px solid var(--panel-border);
+    background:var(--surface);
+    color:var(--text);
+    padding:8px 12px;
+    font-size:13px;
+    border-radius:8px;
+    cursor:pointer;
+    transition:background .12s ease;
+  }
+  .btn:hover{ background:var(--hover-bg); }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
+  .btn-row{ display:flex; gap:8px; flex-wrap:wrap; }
+  .btn-primary{
+    background:var(--accent);
+    color:#fff;
+    border-color:var(--accent);
+    width:100%;
+    padding:11px 12px;
+    font-size:14px;
+    font-weight:600;
+  }
+  .btn-primary:hover{ background:#2f6fdb; }
+  .btn.active{ background:var(--accent); color:#fff; border-color:var(--accent); }
+  .dropper-btn{ width:26px; height:26px; padding:0; flex:0 0 auto; }
+  .dropper-btn svg{ width:14px; height:14px; }
+  .checkbox-row{ display:flex; align-items:center; gap:8px; font-size:13px; }
+  .checkbox-row label{ margin:0 !important; font-weight:400 !important; }
+  textarea, select{ font-family:inherit; }
+  .wide-input{
+    width:100%;
+    padding:7px 8px;
+    font-size:13px;
+    border-radius:8px;
+    border:1px solid var(--panel-border);
+  }
+  .cmyk-inputs{ display:flex; gap:6px; margin-top:8px; }
+  .cmyk-inputs .cmyk-input-field{ flex:1 1 0; display:flex; flex-direction:column; gap:2px; }
+  .cmyk-inputs label{ font-size:11px !important; font-weight:600; color:var(--muted) !important; text-align:center; margin:0 !important; }
+  .cmyk-inputs input[type="number"]{
+    width:100%;
+    padding:5px 4px;
+    font-size:12px;
+    text-align:center;
+    border-radius:6px;
+    border:1px solid var(--panel-border);
+    font-family:inherit;
+  }
+  .color-swatch{
+    width:24px;
+    height:24px;
+    border-radius:6px;
+    border:1px solid var(--panel-border);
+    flex:0 0 auto;
+  }
+  input[type="color"]{
+    width:44px;
+    height:28px;
+    padding:0;
+    border:1px solid var(--panel-border);
+    border-radius:6px;
+    background:var(--surface);
+    cursor:pointer;
+  }
+  hr.sep{ border:none; border-top:1px solid var(--panel-border); margin:18px 0; }
+  .layer-list{
+    list-style:none;
+    margin:0;
+    padding:0;
+    border:1px solid var(--panel-border);
+    border-radius:8px;
+    overflow:hidden;
+  }
+  .layer-item{
+    display:flex;
+    align-items:center;
+    gap:7px;
+    padding:7px 8px;
+    font-size:12.5px;
+    background:var(--surface);
+    border-bottom:1px solid var(--panel-border);
+    cursor:pointer;
+    user-select:none;
+  }
+  .layer-item:last-child{ border-bottom:none; }
+  .layer-item.active{ background:var(--accent-tint); outline:1px solid var(--accent); outline-offset:-1px; }
+  .layer-item.dragging{ opacity:.4; }
+  .layer-item.hidden-layer .layer-name{ opacity:.45; }
+  .layer-drag-handle{ cursor:grab; color:var(--muted); font-size:14px; line-height:1; flex:0 0 auto; }
+  .layer-name{ flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .layer-icon-btn{
+    flex:0 0 auto;
+    border:none;
+    background:transparent;
+    color:var(--muted);
+    font-size:14px;
+    line-height:1;
+    cursor:pointer;
+    padding:2px 5px;
+    border-radius:4px;
+  }
+  .layer-icon-btn:hover{ background:var(--hover-bg); color:var(--text); }
+  .layer-icon-btn.remove:hover{ color:var(--danger); }
+  .layer-empty{ padding:10px 8px; font-size:12px; color:var(--muted); text-align:center; }
+  .history-list{
+    list-style:none;
+    margin:0;
+    padding:0;
+    border:1px solid var(--panel-border);
+    border-radius:8px;
+    overflow-y:auto;
+    max-height:220px;
+    position:relative;
+  }
+  .history-item{
+    padding:6px 8px;
+    font-size:12px;
+    background:var(--surface);
+    border-bottom:1px solid var(--panel-border);
+    cursor:pointer;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .history-item:last-child{ border-bottom:none; }
+  .history-item:hover{ background:var(--hover-bg); }
+  .history-item.current{ background:var(--accent-tint); outline:1px solid var(--accent); outline-offset:-1px; }
+  .history-item.future{ opacity:.5; }
+  .download-note{ font-size:11.5px; line-height:1.5; color:var(--muted); margin:12px 0 0; }
+  .stage-wrap{
+    flex:1 1 auto;
+    display:flex;
+    flex-direction:column;
+    padding:14px 20px 10px;
+    gap:10px;
+    min-width:0;
+    min-height:0;
+  }
+  .tabs{ display:flex; gap:6px; flex:0 0 auto; }
+  .tabs .btn{ padding:6px 14px; }
+  .stage-container{
+    position:relative;
+    flex:1 1 auto;
+    min-height:0;
+    width:100%;
+    border-radius:10px;
+    overflow:hidden;
+    box-shadow:0 1px 3px var(--stage-shadow-1), 0 8px 24px var(--stage-shadow-2);
+    background-image:
+      linear-gradient(45deg, var(--stage-checker) 25%, transparent 25%),
+      linear-gradient(-45deg, var(--stage-checker) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, var(--stage-checker) 75%),
+      linear-gradient(-45deg, transparent 75%, var(--stage-checker) 75%);
+    background-size:18px 18px;
+    background-position:0 0, 0 9px, 9px -9px, -9px 0px;
+    background-color:var(--stage-bg);
+    touch-action:none;
+  }
+  .stage-container.dragover{ outline:3px dashed var(--accent); outline-offset:-3px; }
+  #viewerContainer{ background-image:none; display:none; }
+  #stage{ position:absolute; inset:0; width:100%; height:100%; display:block; }
+  #viewer{ position:absolute; inset:0; }
+  #viewer canvas{ display:block; width:100%; height:100%; }
+  #viewerPlaceholder{
+    position:absolute;
+    inset:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:var(--muted);
+    font-size:13px;
+    text-align:center;
+    padding:20px;
+    pointer-events:none;
+  }
+  #viewerHint{
+    position:absolute;
+    bottom:12px;
+    left:50%;
+    transform:translateX(-50%);
+    font-size:11px;
+    color:var(--muted);
+    background:var(--panel-bg);
+    border:1px solid var(--panel-border);
+    padding:4px 10px;
+    border-radius:20px;
+    pointer-events:none;
+  }
+  .shape-btn-grid{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .shape-btn-grid .btn{ width:100%; }
+  .hint{ font-size:12.5px; color:var(--muted); }
+  .stage-hint{ margin:0; text-align:center; font-size:12px; flex:0 0 auto; }
+  .card-box{
+    border:1px solid var(--panel-border);
+    border-radius:10px;
+    padding:14px;
+    margin-bottom:18px;
+  }
+  .card-box .field:last-child{ margin-bottom:0; }
+  .field-hint{ font-size:11px; color:var(--muted); margin-top:4px; }
+  #status{
+    font-size:12px;
+    color:var(--muted);
+    display:flex;
+    align-items:center;
+    gap:6px;
+    min-height:16px;
+  }
+  #status.busy::before{
+    content:"";
+    width:9px; height:9px;
+    border-radius:50%;
+    border:2px solid var(--accent);
+    border-top-color:transparent;
+    animation:spin .7s linear infinite;
+  }
+  #status.error{ color:var(--danger); }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  #dims{ font-size:12px; color:var(--muted); margin-top:2px; }
+  .modal-overlay{
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,.5);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:1000;
+    padding:20px;
+  }
+  .modal-box{
+    background:var(--surface);
+    border:1px solid var(--panel-border);
+    border-radius:12px;
+    box-shadow:0 8px 32px var(--dropdown-shadow);
+    max-width:420px;
+    width:100%;
+    padding:20px;
+  }
+  .modal-box.modal-wide{ max-width:640px; }
+  .modal-message{ margin:0 0 18px; font-size:13.5px; line-height:1.5; color:var(--text); white-space:pre-line; }
+  .export-mockup-grid{ display:flex; justify-content:center; margin:0 0 18px; }
+  .export-mockup-grid img{
+    display:block;
+    max-width:280px;
+    max-height:340px;
+    width:auto;
+    height:auto;
+    border-radius:8px;
+    border:1px solid var(--panel-border);
+    background:#fff;
+  }
+  .export-progress-track{ height:10px; border-radius:6px; background:var(--hover-bg); overflow:hidden; margin:0 0 4px; }
+  .export-progress-fill{ height:100%; width:0%; background:var(--accent); border-radius:6px; transition:width .15s ease; }
+  .modal-actions{ display:flex; justify-content:flex-end; gap:8px; }
+  .modal-actions .btn-primary{ width:auto; }
+  @media (max-width:760px){
+    body{ height:auto; min-height:100vh; }
+    .app{ flex-direction:column; height:auto; min-height:100vh; }
+    .panel{ width:auto; flex:none; border-right:none; border-left:none; border-bottom:1px solid var(--panel-border); overflow-y:visible; }
+    .stage-wrap{ height:80vh; flex:none; }
+  }
+</style>
+</head>
+<body>
+<div class="menubar">
+  <div class="menu" id="fileMenu">
+    <button type="button" class="menu-btn" id="fileMenuBtn" aria-haspopup="true" aria-expanded="false">File</button>
+    <div class="menu-dropdown" id="fileMenuDropdown" role="menu">
+      <div class="menu-item" id="addImageMenuItem" role="menuitem">Add Image…</div>
+      <div class="menu-item" id="loadProjectZipMenuItem" role="menuitem">Load Project ZIP…</div>
+    </div>
+  </div>
+  <button type="button" class="menu-btn" id="saveZipMenuBtn" disabled>Save</button>
+  <a href="./index.html" class="menu-btn home-link-btn" title="Back to all projects" aria-label="Back to all projects">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.5,11.5,12,4l8.5,7.5 M6,10v9.5h4.5v-6h3v6h4.5V10"></path>
+    </svg>
+  </a>
+  <button type="button" class="menu-btn theme-toggle-btn" id="themeToggleBtn" title="Switch to light theme" aria-label="Switch to light theme">
+    <svg id="themeIconMoon" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20.5,14.2A8.5,8.5,0,1,1,9.8,3.5,7,7,0,0,0,20.5,14.2Z"></path>
+    </svg>
+    <svg id="themeIconSun" viewBox="0 0 24 24" aria-hidden="true" style="display:none;">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="4.5"></circle>
+        <path d="M12,2.5v2.5M12,19v2.5M4.6,4.6l1.8,1.8M17.6,17.6l1.8,1.8M2.5,12h2.5M19,12h2.5M4.6,19.4l1.8-1.8M17.6,6.4l1.8-1.8"></path>
+      </g>
+    </svg>
+  </button>
+</div>
+
+<div class="app">
+  <aside class="panel">
+    <h1>Keychain Customizer</h1>
+    <p class="sub">Build a die-cut sticker keychain from images, text and shapes, then export it as an STL.</p>
+
+    <input type="file" id="imageInput" accept="image/*" multiple style="display:none;">
+    <input type="file" id="fontFileInput" accept=".ttf,.otf,font/ttf,font/otf" style="display:none;">
+    <input type="file" id="projectZipInput" accept=".zip,application/zip" style="display:none;">
+
+    <div class="btn-row" style="margin-bottom:18px;">
+      <button class="btn" id="addImageBtn">+ Add image</button>
+      <button class="btn" id="fitViewBtn" title="Zoom the workspace to fit all layers">Fit view</button>
+      <button class="btn" id="removeLayerBtn" disabled>Remove layer</button>
+    </div>
+
+    <div id="imageFieldsGroup" style="display:none;margin-bottom:18px;">
+      <div class="btn-row" style="margin-bottom:8px;">
+        <button class="btn" id="resetSizeBtn" style="width:100%;">Reset size &amp; aspect ratio</button>
+      </div>
+      <div class="btn-row" style="margin-bottom:8px;">
+        <button class="btn" id="flipHBtn" type="button">Flip horizontal</button>
+        <button class="btn" id="flipVBtn" type="button">Flip vertical</button>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="removeBgBtn">Remove background</button>
+        <button class="btn" id="restoreOriginalBtn" style="display:none;">Restore original</button>
+      </div>
+      <p class="hint" id="removeBgStatus" style="margin:6px 0 0;min-height:1em;font-size:11.5px;"></p>
+    </div>
+
+    <div class="field">
+      <label for="zoomRange">Size <span class="val" id="zoomLabel">100%</span></label>
+      <div class="row"><input type="range" id="zoomRange" min="10" max="600" value="100" step="1" disabled></div>
+    </div>
+
+    <div class="field">
+      <label for="rotRange">Rotation <span class="val" id="rotLabel">0°</span></label>
+      <div class="row"><input type="range" id="rotRange" min="-180" max="180" value="0" step="1" disabled></div>
+      <div class="btn-row" style="margin-top:8px;">
+        <button class="btn" id="rotLeftBtn" disabled>⟲ 15°</button>
+        <button class="btn" id="rotRightBtn" disabled>⟳ 15°</button>
+      </div>
+    </div>
+
+    <div id="shapeFieldsGroup" style="display:none;">
+      <div class="field">
+        <label for="shapeKindSelect">Shape type</label>
+        <select id="shapeKindSelect" class="wide-input">
+          <option value="star">Star</option>
+          <option value="rectangle">Rectangle</option>
+          <option value="square">Square</option>
+          <option value="ellipse">Ellipse</option>
+          <option value="circle">Circle</option>
+          <option value="line">Line</option>
+        </select>
+      </div>
+      <div class="field checkbox-row" id="shapeFilledRow">
+        <input type="checkbox" id="shapeFilledCheckbox" checked>
+        <label for="shapeFilledCheckbox">Filled shape (uncheck for outline only)</label>
+      </div>
+      <div class="field" id="shapeStrokeWidthField" style="display:none;">
+        <label for="shapeStrokeWidthRange">Line width <span class="val" id="shapeStrokeWidthLabel">6</span></label>
+        <div class="row"><input type="range" id="shapeStrokeWidthRange" min="1" max="40" value="6" step="1"></div>
+      </div>
+    </div>
+
+    <div id="colorFieldsGroup" style="display:none;">
+      <div class="field">
+        <label style="display:flex;align-items:center;justify-content:space-between;">
+          <span>Color (CMYK)</span>
+          <button type="button" class="btn dropper-btn" id="colorDropperBtn" title="Pick color from canvas" aria-label="Pick color from canvas">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="13.5" y="2.5" width="6" height="6" rx="1.5" transform="rotate(45 16.5 5.5)"></rect>
+                <line x1="14.5" y1="7.5" x2="6" y2="16"></line>
+              </g>
+              <circle cx="5" cy="17" r="1.7" fill="currentColor"></circle>
+            </svg>
+          </button>
+        </label>
+        <div class="row">
+          <input type="color" id="colorPicker" value="#000000" aria-label="Color">
+          <span class="color-swatch" id="colorSwatch"></span>
+          <span id="cmykReadout" style="font-size:11px;color:var(--muted);margin-left:auto;"></span>
+        </div>
+        <div class="cmyk-inputs">
+          <div class="cmyk-input-field"><label for="cmykCInput">C</label><input type="number" id="cmykCInput" min="0" max="100" step="1" value="0"></div>
+          <div class="cmyk-input-field"><label for="cmykMInput">M</label><input type="number" id="cmykMInput" min="0" max="100" step="1" value="0"></div>
+          <div class="cmyk-input-field"><label for="cmykYInput">Y</label><input type="number" id="cmykYInput" min="0" max="100" step="1" value="0"></div>
+          <div class="cmyk-input-field"><label for="cmykKInput">K</label><input type="number" id="cmykKInput" min="0" max="100" step="1" value="100"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="textFieldsGroup" style="display:none;">
+      <div class="field">
+        <label for="textContentInput">Text content</label>
+        <textarea id="textContentInput" rows="2" class="wide-input" style="resize:vertical;"></textarea>
+      </div>
+      <div class="field">
+        <label for="fontSelect">Font</label>
+        <select id="fontSelect" class="wide-input">
+          <optgroup label="Built-in fonts" id="builtinFontGroup"></optgroup>
+          <optgroup label="Custom fonts" id="customFontGroup"></optgroup>
+          <option value="__upload__">+ Upload custom font (.ttf/.otf)…</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field checkbox-row">
+      <input type="checkbox" id="guideCheckbox" checked>
+      <label for="guideCheckbox">Show artwork bounds guide</label>
+    </div>
+
+    <hr class="sep">
+
+    <button class="btn btn-primary" id="downloadBtn" disabled title="Downloads one zip with the keychain STL, a front-view JPG render, the flattened artwork PNG, a project.xml with every layer's position/size/stacking data, and your original uploaded images — this zip can be re-loaded with &quot;Load project ZIP&quot; below">Download Package</button>
+    <p class="download-note">The package includes the STL, a front-view render, the flattened artwork, and a project file you can re-load later to keep editing.</p>
+
+    <hr class="sep">
+
+    <div class="field">
+      <label for="projectZipDropzone">Load project ZIP</label>
+      <div class="dropzone" id="projectZipDropzone" tabindex="0" role="button" aria-label="Drop a project zip here or click to browse">
+        <strong>Drag &amp; drop an exported project .zip here</strong><br>or click to browse — re-creates the layers and keychain settings exactly as exported
+      </div>
+    </div>
+  </aside>
+
+  <main class="stage-wrap">
+    <div class="tabs">
+      <button class="btn active" id="tabDesign" type="button">Design</button>
+      <button class="btn" id="tabPreview" type="button">3D Preview</button>
+    </div>
+    <div class="stage-container" id="stageContainer">
+      <canvas id="stage"></canvas>
+    </div>
+    <div class="stage-container" id="viewerContainer">
+      <div id="viewer"></div>
+      <div id="viewerPlaceholder">Add an image, text or shape to generate a keychain.</div>
+      <div id="viewerHint" style="display:none">Drag to rotate &middot; scroll to zoom</div>
+    </div>
+    <p class="hint stage-hint" id="stageHint">Drag &amp; drop an image onto the artboard to add it as a layer. Drag to move, drag a corner to resize, a side bubble to stretch, the blue dot to rotate (or shift+scroll, or [ and ]). Scroll to zoom the workspace; drag empty space or hold the middle mouse button to pan.</p>
+  </main>
+
+  <aside class="panel panel-right">
+    <h1>Layers</h1>
+    <p class="sub">Drag to reorder. Click a layer to select it.</p>
+
+    <div class="field">
+      <label for="opacityRange">Opacity <span class="val" id="opacityLabel">100%</span></label>
+      <div class="row"><input type="range" id="opacityRange" min="0" max="100" value="100" step="1" disabled></div>
+    </div>
+
+    <div class="field">
+      <ul class="layer-list" id="layerList"></ul>
+    </div>
+
+    <div class="field">
+      <label>Add text layer</label>
+      <button class="btn" id="addTextBtn" style="width:100%;">+ Add text</button>
+    </div>
+
+    <div class="field">
+      <label>Add shape layer</label>
+      <div class="shape-btn-grid">
+        <button class="btn" data-shape-kind="star">★ Star</button>
+        <button class="btn" data-shape-kind="rectangle">▭ Rectangle</button>
+        <button class="btn" data-shape-kind="square">■ Square</button>
+        <button class="btn" data-shape-kind="ellipse">⬭ Ellipse</button>
+        <button class="btn" data-shape-kind="circle">● Circle</button>
+        <button class="btn" data-shape-kind="line">— Line</button>
+      </div>
+    </div>
+
+    <hr class="sep">
+
+    <h2>Keychain</h2>
+    <div class="card-box">
+      <div class="field">
+        <label for="borderSlider">Border size <span class="val" id="borderVal">4.0 mm</span></label>
+        <input type="range" id="borderSlider" min="0.5" max="12" step="0.5" value="4">
+        <div class="field-hint">Thickness of the die-cut border around the artwork.</div>
+      </div>
+      <div class="field">
+        <label for="smoothSlider">Smoothing <span class="val" id="smoothVal">1.5 mm</span></label>
+        <input type="range" id="smoothSlider" min="0" max="5" step="0.1" value="1.5">
+        <div class="field-hint">Rounds off corners and jagged edges of the cut line.</div>
+      </div>
+      <div class="field">
+        <label for="thicknessSlider">Keychain thickness <span class="val" id="thicknessVal">2.0 mm</span></label>
+        <input type="range" id="thicknessSlider" min="1" max="6" step="0.5" value="2">
+      </div>
+      <div class="field">
+        <label for="heightSlider">Max height <span class="val" id="heightVal">88 mm</span></label>
+        <input type="range" id="heightSlider" min="30" max="88" step="1" value="88">
+        <div class="field-hint">Overall height limit including the loop; artwork scales to fit.</div>
+      </div>
+      <div class="field checkbox-row">
+        <input type="checkbox" id="loopCheckbox" checked>
+        <label for="loopCheckbox">Include keyring loop</label>
+      </div>
+      <div id="loopFields">
+        <div class="field" style="margin-top:18px;">
+          <label for="loopThicknessSlider">Loop thickness <span class="val" id="loopThicknessVal">3.0 mm</span></label>
+          <input type="range" id="loopThicknessSlider" min="1" max="4.5" step="0.5" value="3">
+          <div class="field-hint">How thick the loop band is — thicker means a smaller keyring hole.</div>
+        </div>
+        <div class="field">
+          <label for="loopPositionSlider">Loop position <span class="val" id="loopPositionVal">0.0 mm</span></label>
+          <input type="range" id="loopPositionSlider" min="-25" max="25" step="0.5" value="0">
+          <div class="field-hint">Nudge the loop left/right from its automatic position.</div>
+        </div>
+      </div>
+      <div class="field">
+        <label for="detailSlider">Edge detail <span class="val" id="detailVal">Standard</span></label>
+        <input type="range" id="detailSlider" min="0" max="4" step="1" value="1">
+        <div class="field-hint">Higher detail captures finer artwork features (slower to generate).</div>
+      </div>
+      <div id="status"></div>
+      <div id="dims"></div>
+    </div>
+
+    <div class="field">
+      <label for="historyLimitInput">History <span class="val">(Ctrl+Z to undo)</span></label>
+      <div class="row" style="margin-bottom:8px;">
+        <input type="number" id="historyLimitInput" min="-1" step="1" style="width:64px;padding:5px 6px;font-size:12px;border-radius:6px;border:1px solid var(--panel-border);">
+        <span style="font-size:11.5px;color:var(--muted);">max undo steps (-1 = unlimited)</span>
+      </div>
+      <ul class="history-list" id="historyList"></ul>
+    </div>
+  </aside>
+</div>
+
+<footer class="site-footer">&copy; 2026 Regulus Arms LLC. All rights reserved. &middot; <a href="./tos.html">Terms of Use</a></footer>
+
+<div class="modal-overlay" id="modalOverlay" style="display:none;">
+  <div class="modal-box" id="modalBox" role="alertdialog" aria-modal="true" aria-labelledby="modalMessage">
+    <p class="modal-message" id="modalMessage"></p>
+    <div id="modalExtra"></div>
+    <div class="modal-actions" id="modalActions">
+      <button class="btn" id="modalCancelBtn" type="button">Cancel</button>
+      <button class="btn btn-primary modal-ok-btn" id="modalOkBtn" type="button">OK</button>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="sticker-core.js"></script>
+<script src="modal.js"></script>
+<script src="editor.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
