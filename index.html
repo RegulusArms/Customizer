@@ -300,8 +300,8 @@
 
 <main>
   <div class="hero">
-    <h1>1911, 92FS &amp; PMAG Customizer</h1>
-    <p>Design custom-printed 1911 grip panels, 92FS grip panels, or PMAG 30 magazine panels right in your browser. Pick a project below to start fresh, or load a previously exported project file to pick up where you left off.</p>
+    <h1>1911, 92FS, PMAG &amp; Keychain Customizer</h1>
+    <p>Design custom-printed 1911 grip panels, 92FS grip panels, PMAG 30 magazine panels, or die-cut sticker keychains (STL) right in your browser. Pick a project below to start fresh, or load a previously exported project file to pick up where you left off.</p>
   </div>
 
   <div class="cards">
@@ -390,13 +390,47 @@
         </span>
       </div>
     </a>
+
+    <a class="card" href="./keychain.html" id="keychainCard">
+      <div class="card-preview">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 218" aria-hidden="true">
+          <defs>
+            <linearGradient id="kcSheen" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#ffffff" stop-opacity=".55"/>
+              <stop offset=".5" stop-color="#ffffff" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <!-- extruded side of the keychain (offset copy reads as thickness) -->
+          <g transform="translate(0 6)" fill="#b8ad97" stroke="#b8ad97" stroke-width="24" stroke-linejoin="round">
+            <path fill-rule="evenodd" stroke="none" d="M100,12a18,18 0 1,0 .001,0ZM100,22a8,8 0 1,1 -.001,0Z"/>
+            <path d="M100,48L119.98,100.5L176.08,103.28L132.34,138.51L147.02,192.72L100,162L52.98,192.72L67.66,138.51L23.92,103.28L80.02,100.5Z"/>
+          </g>
+          <!-- die-cut border + loop -->
+          <g fill="#e3dac9" stroke="#e3dac9" stroke-width="24" stroke-linejoin="round">
+            <path fill-rule="evenodd" stroke="none" d="M100,12a18,18 0 1,0 .001,0ZM100,22a8,8 0 1,1 -.001,0Z"/>
+            <path d="M100,48L119.98,100.5L176.08,103.28L132.34,138.51L147.02,192.72L100,162L52.98,192.72L67.66,138.51L23.92,103.28L80.02,100.5Z"/>
+          </g>
+          <!-- printed artwork face -->
+          <path fill="#b7c4d6" d="M100,48L119.98,100.5L176.08,103.28L132.34,138.51L147.02,192.72L100,162L52.98,192.72L67.66,138.51L23.92,103.28L80.02,100.5Z"/>
+          <path fill="url(#kcSheen)" d="M100,48L119.98,100.5L176.08,103.28L132.34,138.51L147.02,192.72L100,162L52.98,192.72L67.66,138.51L23.92,103.28L80.02,100.5Z"/>
+          <path fill="#8a95a6" transform="translate(100 128) scale(.42) translate(-100 -128)" d="M100,48L119.98,100.5L176.08,103.28L132.34,138.51L147.02,192.72L100,162L52.98,192.72L67.66,138.51L23.92,103.28L80.02,100.5Z"/>
+        </svg>
+      </div>
+      <div class="card-body">
+        <h2>Keychain Customizer</h2>
+        <p>Die-cut sticker keychains — the same layer-based editor, exported as a printable STL.</p>
+        <span class="card-cta">Open editor
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5,12h14M13,6l6,6-6,6"></path></svg>
+        </span>
+      </div>
+    </a>
   </div>
 
   <div class="load-section">
     <div class="divider">or continue a saved project</div>
     <div class="dropzone" id="projectDropzone" tabindex="0" role="button" aria-label="Drop a project zip here or click to browse">
       <strong>Drag &amp; drop an exported project .zip here</strong>
-      or click to browse — we'll detect whether it's a 1911, 92FS, or PMAG project and open the right editor
+      or click to browse — we'll detect whether it's a 1911, 92FS, PMAG, or keychain project and open the right editor
     </div>
     <input type="file" id="projectFileInput" accept=".zip,application/zip" style="display:none;">
     <p class="load-status" id="loadStatus"></p>
@@ -454,7 +488,8 @@
   const PROJECT_KIND_DESTINATIONS = {
     grip1911CustomizerProject: "1911.html",
     grip92fsCustomizerProject: "92fs.html",
-    pmagCustomizerProject: "pmag.html"
+    pmagCustomizerProject: "pmag.html",
+    keychainCustomizerProject: "keychain.html"
   };
   function detectProjectKind(file){
     return JSZip.loadAsync(file).then((zip) => {
@@ -463,7 +498,7 @@
       // export) — either one's root tag identifies the product, so the first one found is
       // enough to route correctly.
       const path = Object.keys(zip.files).find((p) => !zip.files[p].dir && (p === "project.xml" || p.endsWith("/project.xml")));
-      if (!path) throw new Error("That zip doesn't contain a project.xml — it doesn't look like a 1911, 92FS, or PMAG Customizer export.");
+      if (!path) throw new Error("That zip doesn't contain a project.xml — it doesn't look like a 1911, 92FS, PMAG, or Keychain Customizer export.");
       return zip.file(path).async("string");
     }).then((xmlText) => {
       const doc = new DOMParser().parseFromString(xmlText, "application/xml");
