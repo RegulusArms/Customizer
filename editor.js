@@ -1367,6 +1367,7 @@ function renderComposite(maxDim = 2200) {
   out.width = x1 - x0 + 1;
   out.height = y1 - y0 + 1;
   out.getContext('2d').drawImage(c, x0, y0, out.width, out.height, 0, 0, out.width, out.height);
+  out.pxPerUnit = scale; // composite px per world unit, so callers can map layer sizes onto it
   return out;
 }
 
@@ -1387,7 +1388,10 @@ async function dataURLToBytes(dataURL) {
   return new Uint8Array(await res.arrayBuffer());
 }
 
-/** Writes project.xml plus every referenced image/font into `zip`. `settings` is a flat object of keychain options. */
+/**
+ * Writes project.xml plus every referenced image/font into `zip`. `settings` is a flat object of keychain options.
+ * Resolves to the visible image layers' zip paths with their placed size (world units), for the print-size notes.
+ */
 async function exportProject(zip, settings) {
   const doc = document.implementation.createDocument(null, ROOT_TAG, null);
   const root = doc.documentElement;
@@ -1415,6 +1419,7 @@ async function exportProject(zip, settings) {
   const usedFontValues = new Set(layers.filter(l => l.type === 'text').map(l => l.fontFamily));
   const layersEl = doc.createElement('layers');
   root.appendChild(layersEl);
+  const imageFiles = [];
   for (const l of layers) {
     const el = doc.createElement('layer');
     for (const k of NUM_ATTRS) if (l[k] != null) el.setAttribute(k, String(l[k]));
@@ -1422,7 +1427,9 @@ async function exportProject(zip, settings) {
     for (const k of STR_ATTRS) if (l[k] != null) el.setAttribute(k, String(l[k]));
     if (l.color) for (const k of ['c', 'm', 'y', 'k']) el.setAttribute('color' + k.toUpperCase(), String(l.color[k]));
     if (l.type === 'image') {
-      el.setAttribute('file', await writeAsset(l.assetKey));
+      const file = await writeAsset(l.assetKey);
+      el.setAttribute('file', file);
+      if (isDrawable(l)) imageFiles.push({ path: file, w: Math.abs(l.nw * l.sx), h: Math.abs(l.nh * l.sy), rot: l.rot });
       if (l.origAssetKey) el.setAttribute('origFile', await writeAsset(l.origAssetKey));
     } else if (l.type === 'text') {
       el.appendChild(doc.createElement('text')).textContent = l.text;
@@ -1446,6 +1453,7 @@ async function exportProject(zip, settings) {
 
   const xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(doc);
   zip.file('project.xml', xml);
+  return imageFiles;
 }
 
 function mimeFromPath(path) {
@@ -1459,7 +1467,8 @@ async function zipEntryToDataURL(zip, path) {
 }
 
 /** Replaces the current design with the one stored in `zip`. Returns the keychain settings as strings. */
-async function importProject(zip) {
+/** `onProgress(done, total)`, if given, is called as each image/font file is unpacked. */
+async function importProject(zip, onProgress) {
   const path = Object.keys(zip.files).find(p => !zip.files[p].dir && (p === 'project.xml' || p.endsWith('/project.xml')));
   if (!path) throw new Error("That zip doesn't contain a project.xml.");
   const base = path.slice(0, path.length - 'project.xml'.length);
@@ -1471,10 +1480,20 @@ async function importProject(zip) {
   const settings = {};
   for (const a of Array.from(root.attributes)) settings[a.name] = a.value;
 
+  const total = doc.querySelectorAll('fonts > font, layers > layer[file], layers > layer[origFile]').length
+    + doc.querySelectorAll('layers > layer[file][origFile]').length;
+  let done = 0;
+  const unpack = async p => {
+    const dataURL = await zipEntryToDataURL(zip, p);
+    if (onProgress) onProgress(++done, total);
+    return dataURL;
+  };
+  if (onProgress) onProgress(0, total);
+
   // fonts first so text layers measure against the right face
   const fontMap = new Map(); // family attr -> CSS value
   for (const el of Array.from(doc.querySelectorAll('fonts > font'))) {
-    const dataURL = await zipEntryToDataURL(zip, base + el.getAttribute('file'));
+    const dataURL = await unpack(base + el.getAttribute('file'));
     const value = await registerCustomFont(el.getAttribute('file'), dataURL, el.getAttribute('family'), el.getAttribute('label'));
     fontMap.set(el.getAttribute('family'), value);
   }
@@ -1493,10 +1512,10 @@ async function importProject(zip) {
     if (!Number.isFinite(l.id)) l.id = maxId + 1;
     maxId = Math.max(maxId, l.id);
     if (l.type === 'image') {
-      const a = await registerAsset(await zipEntryToDataURL(zip, base + el.getAttribute('file')), l.name);
+      const a = await registerAsset(await unpack(base + el.getAttribute('file')), l.name);
       l.assetKey = a.key;
       if (el.hasAttribute('origFile')) {
-        l.origAssetKey = (await registerAsset(await zipEntryToDataURL(zip, base + el.getAttribute('origFile')), l.name)).key;
+        l.origAssetKey = (await registerAsset(await unpack(base + el.getAttribute('origFile')), l.name)).key;
       }
     } else if (l.type === 'text') {
       const t = el.querySelector('text');
