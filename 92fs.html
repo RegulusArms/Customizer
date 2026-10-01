@@ -937,7 +937,7 @@
     <hr class="sep">
 
     <button class="btn btn-primary" id="downloadZipBtn" disabled title="Downloads one zip with a subfolder for each side you've worked on (Left/Right) — each containing the JPG mockup, the full quality PNG layers, a PNG of each individual layer, a project.xml with every layer's position/size/stacking data, and your original uploaded images — this zip can be re-loaded with &quot;Load project ZIP&quot; below">Download ZIP</button>
-    <p class="download-note">Download the zip (it includes both the left and right panels), then email it to ross@regulusarms.com with your GunBroker order number or square order number as the subject line. If the zip file is too big to email, you can upload the zip to <a href="https://catbox.moe/" target="_blank" rel="noopener">https://catbox.moe/</a> and send me a link to it.</p>
+    <p class="download-note">Download the zip (it includes both the left and right panels), then email it to ross@regulusarms.com with your GunBroker order number or eBay order number as the subject line. If the zip file is too big to email, you can upload the zip to <a href="https://catbox.moe/" target="_blank" rel="noopener">https://catbox.moe/</a> and send me a link to it.</p>
 
     <hr class="sep">
 
@@ -4602,6 +4602,37 @@
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(doc);
   }
 
+  // ---- export: print-sizes.txt — approximate physical size (mm) of the full-layers PNG ----
+  // ---- and each original image/layer asset, scaled off the panel's refLengthMM, so    ----
+  // ---- there's a starting point when sizing the files for print.                      ----
+  function buildPrintSizesTxt(fullLayersName, mockupName, originals){
+    const unitsPerMM = unitsPerMMForCurrentShape();
+    const fmt = (units) => (units / unitsPerMM).toFixed(2);
+    const size = (w, h) => `${fmt(w)} mm W x ${fmt(h)} mm H`;
+    const shapeDef = BUILTIN_SHAPES[shapeSelect.value];
+    const refMM = (shapeDef && shapeDef.refLengthMM) || 127;
+    const cbb = bg.clipBBoxRect;
+    const full = computeFullLayersBounds(null);
+    const lines = [
+      `${currentShapeLabel || "Shape"} - approximate print sizes`,
+      `Scale is based on a panel height of ${refMM.toFixed(2)} mm${shapeDef && shapeDef.refLengthMM ? "" : " (generic estimate)"}.`,
+      "These are approximations meant as a starting point for print sizing.",
+      "",
+      `Panel shape: ${size(cbb.w, cbb.h)}`,
+      `Mockup image (${mockupName}): ${size(bg.w, bg.h)}`,
+      `Full layers image (${fullLayersName}): ${size(full.w, full.h)}`,
+      "",
+      "Original images (original-images/), at their placed size:"
+    ];
+    if (!originals.length) lines.push("  (none)");
+    originals.forEach(({ name, layer }) => {
+      const w = layer.naturalW * layer.xform.scale, h = layer.naturalH * layer.xform.scale;
+      const rot = ((layer.xform.rot % 360) + 360) % 360;
+      lines.push(`  ${name}: ${size(w, h)}${rot ? ` (rotated ${+rot.toFixed(2)} deg)` : ""}`);
+    });
+    return lines.join("\r\n") + "\r\n";
+  }
+
   // wraps a callback-style blob builder (buildJPGBlob / buildFullLayersPNGBlob, both
   // `(cb, useLevel)`) as a promise so exportZip can request the normal and level-view
   // renders together via Promise.all instead of nesting a callback per variant.
@@ -4641,8 +4672,10 @@
       });
     })));
 
-    sideZip.file(buildExportFilename("jpg"), jpgBlob);
-    sideZip.file(buildExportFilename("png", "full-layers"), pngBlob);
+    const mockupName = buildExportFilename("jpg");
+    const fullLayersName = buildExportFilename("png", "full-layers");
+    sideZip.file(mockupName, jpgBlob);
+    sideZip.file(fullLayersName, pngBlob);
     if (levelJpgBlob) sideZip.file(buildExportFilename("jpg", "level-view"), levelJpgBlob);
 
     const originalsFolder = sideZip.folder("original-images");
@@ -4663,6 +4696,8 @@
       originalsFolder.file(name, blob);
       assetFilenames.set(layer.id, name);
     });
+    const originals = layers.filter((l) => assetFilenames.has(l.id)).map((layer) => ({ name: assetFilenames.get(layer.id), layer }));
+    sideZip.file("print-sizes.txt", buildPrintSizesTxt(fullLayersName, mockupName, originals));
 
     // custom (uploaded, non-Google) fonts actually used by a text layer
     const fontFilesMap = new Map(); // familyName -> { filename, label }
@@ -4782,7 +4817,8 @@
     saveZipMenuBtn.disabled = !hasAnyLayers;
   }
 
-  // ---- export progress: a non-dismissible bar so a several-second export (rendering  ----
+  // ---- export progress (also reused by importProjectZip while loading a project): a  ----
+  // ---- non-dismissible bar so a several-second export (rendering                     ----
   // ---- each side, then compressing the zip) doesn't read as a frozen page. Shown/hidden ----
   // ---- directly (bypassing openModal/queueModal) since its lifetime is controlled by    ----
   // ---- exportZip itself rather than a user dismissing it — safe to do here since it's   ----
@@ -4872,10 +4908,32 @@
     return map[ext] || "application/octet-stream";
   }
 
+  // set by importProjectZip for the duration of a load: caches each decoded asset (saved
+  // history often points many entries at the same file) and drives the progress bar.
+  let importTracker = null;
+
   function zipFileToDataURL(zip, path){
     const entry = path && zip.file(path);
     if (!entry) return Promise.resolve(null);
-    return entry.async("base64").then((b64) => `data:${mimeFromExt(path)};base64,${b64}`);
+    const tracker = importTracker;
+    const key = (zip.root || "") + path;
+    if (tracker && tracker.cache.has(key)) return tracker.cache.get(key);
+    const p = entry.async("base64").then((b64) => {
+      if (tracker) tracker.tick();
+      return `data:${mimeFromExt(path)};base64,${b64}`;
+    });
+    if (tracker) tracker.cache.set(key, p);
+    return p;
+  }
+
+  // counts the asset files a project zip can reference, as the denominator for the load bar
+  function countImportAssets(zip){
+    return Object.keys(zip.files).filter((p) => !zip.files[p].dir && /(^|\/)(original-images|history-assets|fonts)\//.test(p)).length;
+  }
+
+  // lets the browser paint the progress bar before a long synchronous step
+  function nextPaint(){
+    return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
   }
 
   // builds one layer object (without a runtime id) from a <layer> element of project.xml,
@@ -5064,33 +5122,55 @@
     if (anySideHasLayers() && !confirm("Loading this project will replace your current layers on both sides. Continue?")) return;
     projectZipDropzone.classList.add("dragover");
     const sideKeys = Object.keys(BUILTIN_SHAPES);
+    showExportProgress("Unzipping project…");
+    updateExportProgress(0.05);
+    const finishSide = () => {
+      updateExportProgress(0.95, "Building editor…");
+      return nextPaint();
+    };
 
-    JSZip.loadAsync(file).then((zip) => {
+    nextPaint().then(() => JSZip.loadAsync(file)).then((zip) => {
+      const total = countImportAssets(zip);
+      let done = 0;
+      importTracker = {
+        cache: new Map(),
+        tick(){
+          done++;
+          updateExportProgress(0.1 + 0.85 * Math.min(1, done / Math.max(1, total)),
+            `Loading images and fonts… (${Math.min(done, total)} of ${total})`);
+        }
+      };
+      updateExportProgress(0.1, total ? `Loading images and fonts… (0 of ${total})` : "Reading project…");
       const combinedKeys = sideKeys.filter((key) => !!zip.file(key + "/project.xml"));
 
       if (combinedKeys.length){
         return Promise.all(combinedKeys.map((key) =>
           readProjectXML(zip.folder(key), `Missing project.xml for the ${BUILTIN_SHAPES[key].label} panel.`)
             .then((parsed) => [key, sideStateFromParsed(parsed)])
-        )).then((entries) => {
+        )).then((entries) => finishSide().then(() => entries)).then((entries) => {
           sides = {};
           entries.forEach(([key, state]) => { sides[key] = state; });
           const firstKey = entries.length ? entries[0][0] : sideKeys[0];
           activateSide(firstKey);
+          hideExportProgress(); // synchronously, so it can't close a dialog activateSide queues
         });
       }
 
       return readProjectXML(zip, "This zip doesn't contain a project.xml — it doesn't look like a 92FS Grip Customizer export.")
+        .then((parsed) => finishSide().then(() => parsed))
         .then((parsed) => {
           const targetKey = BUILTIN_SHAPES[parsed.shapeValue] ? parsed.shapeValue : currentSideKey;
           sides = {};
           sides[targetKey] = sideStateFromParsed(parsed);
           activateSide(targetKey);
+          hideExportProgress(); // synchronously, so it can't close a dialog activateSide queues
         });
     }).catch((err) => {
       console.error(err);
+      hideExportProgress();
       alert("Couldn't load that project zip. " + (err && err.message ? err.message : ""));
     }).then(() => {
+      importTracker = null;
       projectZipDropzone.classList.remove("dragover");
     });
   }

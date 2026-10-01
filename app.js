@@ -475,6 +475,7 @@ function buildStickerGroup(source, settings, detail) {
     widthMM: rawWidthMM * fitScale,
     heightMM: rawHeightMM * fitScale,
     thicknessMM,
+    artworkMMPerPx: (imageAreaHeightMM / ih) * fitScale, // printed mm per px of the source composite
   };
 }
 
@@ -571,6 +572,29 @@ const canvasToBlob = (c, type) => new Promise((resolve, reject) => {
   c.toBlob(b => (b ? resolve(b) : reject(new Error('Could not encode the artwork image.'))), type);
 });
 
+// Approximate printed size (mm) of artwork.png and each original image, scaled the same way
+// the generator fits the artwork into the keychain — a starting point for print sizing.
+function buildPrintSizesTxt(result, artwork, imageFiles) {
+  const mmPerPx = result.artworkMMPerPx;
+  const mmPerUnit = mmPerPx * artwork.pxPerUnit;
+  const size = (w, h) => `${w.toFixed(2)} mm W x ${h.toFixed(2)} mm H`;
+  const lines = [
+    'Keychain - approximate print sizes',
+    'These are approximations meant as a starting point for print sizing.',
+    '',
+    `Keychain outline (with border/loop): ${size(result.widthMM, result.heightMM)}`,
+    `Full layers image (artwork.png): ${size(artwork.width * mmPerPx, artwork.height * mmPerPx)}`,
+    '',
+    'Original images (assets/), at their placed size:',
+  ];
+  if (!imageFiles.length) lines.push('  (none)');
+  for (const f of imageFiles) {
+    const rot = ((f.rot % 360) + 360) % 360;
+    lines.push(`  ${f.path.replace(/^assets\//, '')}: ${size(f.w * mmPerUnit, f.h * mmPerUnit)}${rot ? ` (rotated ${+rot.toFixed(2)} deg)` : ''}`);
+  }
+  return lines.join('\r\n') + '\r\n';
+}
+
 let exporting = false;
 async function exportPackage() {
   if (exporting) return;
@@ -602,7 +626,8 @@ async function exportPackage() {
     zip.file('keychain-sticker-front.jpg', jpegBase64, { base64: true });
     const artwork = editor.renderComposite(COMPOSITE_MAX_DIM);
     if (artwork) zip.file('artwork.png', await canvasToBlob(artwork, 'image/png'));
-    await editor.exportProject(zip, readSettings());
+    const imageFiles = await editor.exportProject(zip, readSettings());
+    if (artwork) zip.file('print-sizes.txt', buildPrintSizesTxt(previousResult, artwork, imageFiles));
 
     progress.update(0.5, 'Compressing zip…');
     const zipBlob = await zip.generateAsync(
@@ -631,16 +656,24 @@ async function importProjectZip(file) {
     const ok = await showConfirm('Loading a project replaces your current design. Continue?', 'Load project');
     if (!ok) return;
   }
+  const progress = showProgress('Unzipping project…');
+  progress.update(0.05);
   try {
     const zip = await JSZip.loadAsync(file);
-    const settings = await editor.importProject(zip);
+    const settings = await editor.importProject(zip, (done, total) => progress.update(
+      0.1 + 0.85 * (total ? done / total : 1),
+      total ? `Loading images and fonts… (${done} of ${total})` : 'Reading project…'
+    ));
+    progress.update(0.95, 'Building editor…');
     applySettings(settings);
     clearResult();
     dirty = true;
     showTab('design');
     updateButtons();
+    progress.close();
   } catch (err) {
     console.error(err);
+    progress.close();
     showInfo(err && err.message ? err.message : "Couldn't load that project file.");
   }
 }
