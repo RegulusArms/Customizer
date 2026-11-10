@@ -507,6 +507,29 @@
     outline-offset:-1px;
   }
   .layer-item.dragging{opacity:.4;}
+  .other-side-layers{margin-top:10px;}
+  .other-side-heading{
+    font-size:11.5px;
+    color:var(--muted);
+    margin:0 0 4px;
+  }
+  .layer-item.other-side{
+    opacity:.5;
+    cursor:grab;
+  }
+  .layer-item.other-side:hover{opacity:.75;}
+  .layer-item.copy-placeholder{
+    justify-content:center;
+    color:var(--accent);
+    background:var(--accent-tint);
+    outline:1px dashed var(--accent);
+    outline-offset:-1px;
+    font-size:12px;
+  }
+  .layer-list.copy-target{
+    outline:2px dashed var(--accent);
+    outline-offset:2px;
+  }
   .layer-drag-handle{
     cursor:grab;
     color:var(--muted);
@@ -1032,6 +1055,7 @@
 
     <div class="field">
       <ul class="layer-list" id="layerList"></ul>
+      <div id="otherSideLayers"></div>
     </div>
 
     <div class="field">
@@ -1134,7 +1158,7 @@
   // ~5in (127mm) grip-panel assumption (see appendEdgeFadeDefs).
   const BUILTIN_SHAPES = {
     left: { label: "1911 Left", svg: SVG_LEFT, refLengthMM: 105.55 },
-    right: { label: "1911 Right", svg: SVG_RIGHT, refLengthMM: 104.6 }
+    right: { label: "1911 Right", svg: SVG_RIGHT, refLengthMM: 105.55 }
   };
 
   const BASE_FONT_SIZE = 80;
@@ -1186,6 +1210,11 @@
   // currently-inactive side's saved session (see captureCurrentSide/activateSide below).
   let currentSideKey = Object.keys(BUILTIN_SHAPES)[0];
   let sides = {};
+  // per-side panel geometry ({ cbb, unitsPerMM }), recorded whenever a side is activated,
+  // so a layer copied from another side can keep its physical size and relative position
+  const sideGeometry = {};
+  // set while a layer from another side's (greyed-out) list is being dragged
+  let crossSideDrag = null;
 
   // ---- history (undo/jump-to-state) ----
   // a capped stack of full-state snapshots (not diffs) — simplest way to guarantee any
@@ -1231,6 +1260,7 @@
   const projectZipInput = document.getElementById("projectZipInput");
   const projectZipDropzone = document.getElementById("projectZipDropzone");
   const layerListEl = document.getElementById("layerList");
+  const otherSideLayersEl = document.getElementById("otherSideLayers");
   const shapeSelect = document.getElementById("shapeSelect");
   const levelViewCheckbox = document.getElementById("levelViewCheckbox");
   const previewFadeBtn = document.getElementById("previewFadeBtn");
@@ -1667,6 +1697,7 @@
     updatePreviewFadeUI();
     historyBeforeSnapshot = null; // never carry a pending drag/typing snapshot across sides
     parseAndLoadBackground(shape.svg); // rebuilds bg + calls buildStage() with `layers` above
+    if (bg) sideGeometry[key] = { cbb: Object.assign({}, bg.clipBBoxRect), unitsPerMM: unitsPerMMForCurrentShape() };
     layers.forEach((l) => updateLayerResolutionFlag(l));
     renderLayerList();
     updateControlsEnabled();
@@ -3399,7 +3430,141 @@
   }
 
   // ---- layer list UI ----
+  function layerListName(layer){
+    if (layer.type === "text") return "🔤 " + ((layer.text || "Text").split("\n")[0].slice(0, 24) || "Text");
+    if (layer.type === "shape") return "🔷 " + layer.shapeKind.charAt(0).toUpperCase() + layer.shapeKind.slice(1);
+    return layer.name;
+  }
+
+  // the other side(s)' layers, greyed out under this side's list — drag one up into the
+  // list above to copy it onto this side.
+  function renderOtherSideLayers(){
+    otherSideLayersEl.innerHTML = "";
+    Object.keys(BUILTIN_SHAPES).forEach((key) => {
+      if (key === currentSideKey) return;
+      const otherLayers = sides[key] && sides[key].layers;
+      if (!otherLayers || !otherLayers.length) return;
+      const wrap = document.createElement("div");
+      wrap.className = "other-side-layers";
+      const heading = document.createElement("p");
+      heading.className = "other-side-heading";
+      heading.textContent = `${BUILTIN_SHAPES[key].label} — drag a layer up to copy it here`;
+      wrap.appendChild(heading);
+      const ul = document.createElement("ul");
+      ul.className = "layer-list";
+      otherLayers.slice().reverse().forEach((layer) => {
+        const li = document.createElement("li");
+        li.className = "layer-item other-side";
+        li.draggable = true;
+        li.title = `On ${BUILTIN_SHAPES[key].label}. Drag into the list above to copy it to this panel (keeps its size and rotation).`;
+        const handle = document.createElement("span");
+        handle.className = "layer-drag-handle";
+        handle.textContent = "⠿";
+        li.appendChild(handle);
+        const name = document.createElement("span");
+        name.className = "layer-name";
+        name.textContent = layerListName(layer);
+        li.appendChild(name);
+        li.addEventListener("dragstart", (e) => {
+          crossSideDrag = { sideKey: key, layerId: layer.id };
+          li.classList.add("dragging");
+          layerListEl.classList.add("copy-target");
+          e.dataTransfer.effectAllowed = "copy";
+          try{ e.dataTransfer.setData("text/plain", "copy-layer:" + layer.id); }catch(err){ /* ignore */ }
+        });
+        li.addEventListener("dragend", () => {
+          li.classList.remove("dragging");
+          endCrossSideDrag();
+        });
+        ul.appendChild(li);
+      });
+      wrap.appendChild(ul);
+      otherSideLayersEl.appendChild(wrap);
+    });
+  }
+
+  let copyPlaceholder = null;
+  function endCrossSideDrag(){
+    crossSideDrag = null;
+    layerListEl.classList.remove("copy-target");
+    if (copyPlaceholder && copyPlaceholder.parentNode) copyPlaceholder.parentNode.removeChild(copyPlaceholder);
+    copyPlaceholder = null;
+  }
+
+  // shows where the copied layer will land in this side's stacking order
+  layerListEl.addEventListener("dragover", (e) => {
+    if (!crossSideDrag) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    if (!copyPlaceholder){
+      copyPlaceholder = document.createElement("li");
+      copyPlaceholder.className = "layer-item copy-placeholder";
+      copyPlaceholder.textContent = "Copy here";
+    }
+    const items = Array.from(layerListEl.children).filter((el) => el.dataset && el.dataset.id);
+    const before = items.find((el) => {
+      const r = el.getBoundingClientRect();
+      return e.clientY < r.top + r.height / 2;
+    });
+    if (before){
+      if (copyPlaceholder.nextSibling !== before) layerListEl.insertBefore(copyPlaceholder, before);
+    } else if (layerListEl.lastChild !== copyPlaceholder){
+      layerListEl.appendChild(copyPlaceholder);
+    }
+  });
+  layerListEl.addEventListener("drop", (e) => {
+    if (!crossSideDrag) return;
+    e.preventDefault();
+    const drag = crossSideDrag;
+    // position in top-to-bottom list order = how many current layers sit above the placeholder
+    let indexTopToBottom = layers.length;
+    if (copyPlaceholder && copyPlaceholder.parentNode === layerListEl){
+      indexTopToBottom = 0;
+      for (let el = copyPlaceholder.previousSibling; el; el = el.previousSibling){
+        if (el.dataset && el.dataset.id) indexTopToBottom++;
+      }
+    }
+    endCrossSideDrag();
+    copyLayerFromSide(drag.sideKey, drag.layerId, indexTopToBottom);
+  });
+
+  // copies a layer from another side onto this one, keeping its physical size and rotation
+  // and placing it at the same relative spot within this panel's outline
+  function copyLayerFromSide(srcKey, srcId, indexTopToBottom){
+    const src = sides[srcKey] && sides[srcKey].layers.find((l) => l.id === srcId);
+    if (!src || !bg) return;
+    const copy = cloneLayerForHistory(src);
+    copy.id = ++layerIdCounter;
+
+    const dst = { cbb: bg.clipBBoxRect, unitsPerMM: unitsPerMMForCurrentShape() };
+    const from = sideGeometry[srcKey] || dst; // unvisited side: assume the same panel units
+    const unitRatio = (dst.unitsPerMM && from.unitsPerMM) ? dst.unitsPerMM / from.unitsPerMM : 1;
+    const relX = from.cbb.w ? (src.xform.cx - from.cbb.x) / from.cbb.w : 0.5;
+    const relY = from.cbb.h ? (src.xform.cy - from.cbb.y) / from.cbb.h : 0.5;
+    copy.xform = {
+      cx: dst.cbb.x + relX * dst.cbb.w,
+      cy: dst.cbb.y + relY * dst.cbb.h,
+      scale: src.xform.scale * unitRatio,
+      rot: src.xform.rot
+    };
+    // same unit conversion as scale, so the zoom slider reads the same % as the original
+    copy.fitScale = (src.fitScale || 1) * unitRatio;
+
+    const insertAt = Math.max(0, Math.min(layers.length, layers.length - indexTopToBottom));
+    layers.splice(insertAt, 0, copy);
+    selectedLayerId = copy.id;
+    if (copy.type === "image") updateLayerResolutionFlag(copy);
+    renderLayerList();
+    buildStage();
+    syncZoomSlider();
+    syncRotationSlider();
+    updateControlsEnabled();
+    syncTextControls();
+    recordHistory(`Copied layer ${layerLabel(copy)} from ${BUILTIN_SHAPES[srcKey].label}`);
+  }
+
   function renderLayerList(){
+    renderOtherSideLayers();
     layerListEl.innerHTML = "";
     if (!layers.length){
       const empty = document.createElement("div");
@@ -3423,14 +3588,7 @@
 
       const name = document.createElement("span");
       name.className = "layer-name";
-      if (layer.type === "text"){
-        name.textContent = "🔤 " + ((layer.text || "Text").split("\n")[0].slice(0, 24) || "Text");
-      } else if (layer.type === "shape"){
-        const kindLabel = layer.shapeKind.charAt(0).toUpperCase() + layer.shapeKind.slice(1);
-        name.textContent = "🔷 " + kindLabel;
-      } else {
-        name.textContent = layer.name;
-      }
+      name.textContent = layerListName(layer);
       li.appendChild(name);
 
       if (layerHasQualityWarning(layer)){
