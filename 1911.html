@@ -452,6 +452,30 @@
     transform:translate(-50%,-50%);
     pointer-events:none;
   }
+  .grad-stops{
+    display:flex;
+    gap:6px;
+    margin-top:8px;
+  }
+  .grad-stops .btn{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:6px;
+    width:auto;
+    flex:1 1 auto;
+    margin:0;
+    padding:6px 8px;
+    font-size:12px;
+  }
+  .grad-stops #gradSwapBtn{
+    flex:0 0 auto;
+  }
+  .grad-stops .color-swatch{
+    width:16px;
+    height:16px;
+    border-radius:4px;
+  }
   hr.sep{
     border:none;
     border-top:1px solid var(--panel-border);
@@ -483,6 +507,29 @@
     outline-offset:-1px;
   }
   .layer-item.dragging{opacity:.4;}
+  .other-side-layers{margin-top:10px;}
+  .other-side-heading{
+    font-size:11.5px;
+    color:var(--muted);
+    margin:0 0 4px;
+  }
+  .layer-item.other-side{
+    opacity:.5;
+    cursor:grab;
+  }
+  .layer-item.other-side:hover{opacity:.75;}
+  .layer-item.copy-placeholder{
+    justify-content:center;
+    color:var(--accent);
+    background:var(--accent-tint);
+    outline:1px dashed var(--accent);
+    outline-offset:-1px;
+    font-size:12px;
+  }
+  .layer-list.copy-target{
+    outline:2px dashed var(--accent);
+    outline-offset:2px;
+  }
   .layer-drag-handle{
     cursor:grab;
     color:var(--muted);
@@ -876,6 +923,33 @@
             </svg>
           </button>
         </label>
+        <select id="fillTypeSelect" aria-label="Fill type" style="width:100%;padding:7px 8px;font-size:13px;border-radius:8px;border:1px solid var(--panel-border);margin-bottom:4px;">
+          <option value="solid">Solid color</option>
+          <option value="linear">Linear gradient</option>
+          <option value="radial">Radial gradient</option>
+        </select>
+        <div id="gradientControls" style="display:none;">
+          <div class="grad-stops">
+            <button type="button" class="btn active" id="gradStop1Btn" title="Edit the gradient's start color"><span class="color-swatch" id="gradStop1Swatch"></span>Start</button>
+            <button type="button" class="btn" id="gradStop2Btn" title="Edit the gradient's end color"><span class="color-swatch" id="gradStop2Swatch"></span>End</button>
+            <button type="button" class="btn" id="gradSwapBtn" title="Swap start and end colors" aria-label="Swap start and end colors">&#8646;</button>
+          </div>
+          <div class="cmyk-row" id="gradAngleRow" style="margin-top:8px;">
+            <label for="gradAngleRange" style="width:52px;">Angle</label>
+            <input type="range" id="gradAngleRange" min="0" max="359" value="0" step="1">
+            <span class="val" id="gradAngleVal">0&deg;</span>
+          </div>
+          <div class="cmyk-row" title="How gradually the colors change: 100% fades across the whole shape, 0% is a hard edge">
+            <label for="gradBlendRange" style="width:52px;">Blend</label>
+            <input type="range" id="gradBlendRange" min="0" max="100" value="100" step="1">
+            <span class="val" id="gradBlendVal">100%</span>
+          </div>
+          <div class="cmyk-row" title="How much of the shape each color covers (start / end)">
+            <label for="gradBalanceRange" style="width:52px;">Balance</label>
+            <input type="range" id="gradBalanceRange" min="0" max="100" value="50" step="1">
+            <span class="val" id="gradBalanceVal">50/50</span>
+          </div>
+        </div>
         <div class="color-wheel-wrap">
           <div class="color-wheel" id="colorWheel" role="slider" aria-label="Color hue and saturation" tabindex="0">
             <div class="color-wheel-dot" id="colorWheelDot"></div>
@@ -981,6 +1055,7 @@
 
     <div class="field">
       <ul class="layer-list" id="layerList"></ul>
+      <div id="otherSideLayers"></div>
     </div>
 
     <div class="field">
@@ -1083,7 +1158,7 @@
   // ~5in (127mm) grip-panel assumption (see appendEdgeFadeDefs).
   const BUILTIN_SHAPES = {
     left: { label: "1911 Left", svg: SVG_LEFT, refLengthMM: 105.55 },
-    right: { label: "1911 Right", svg: SVG_RIGHT, refLengthMM: 104.6 }
+    right: { label: "1911 Right", svg: SVG_RIGHT, refLengthMM: 105.55 }
   };
 
   const BASE_FONT_SIZE = 80;
@@ -1135,6 +1210,11 @@
   // currently-inactive side's saved session (see captureCurrentSide/activateSide below).
   let currentSideKey = Object.keys(BUILTIN_SHAPES)[0];
   let sides = {};
+  // per-side panel geometry ({ cbb, unitsPerMM }), recorded whenever a side is activated,
+  // so a layer copied from another side can keep its physical size and relative position
+  const sideGeometry = {};
+  // set while a layer from another side's (greyed-out) list is being dragged
+  let crossSideDrag = null;
 
   // ---- history (undo/jump-to-state) ----
   // a capped stack of full-state snapshots (not diffs) — simplest way to guarantee any
@@ -1180,6 +1260,7 @@
   const projectZipInput = document.getElementById("projectZipInput");
   const projectZipDropzone = document.getElementById("projectZipDropzone");
   const layerListEl = document.getElementById("layerList");
+  const otherSideLayersEl = document.getElementById("otherSideLayers");
   const shapeSelect = document.getElementById("shapeSelect");
   const levelViewCheckbox = document.getElementById("levelViewCheckbox");
   const previewFadeBtn = document.getElementById("previewFadeBtn");
@@ -1226,6 +1307,20 @@
   const colorSwatch = document.getElementById("colorSwatch");
   const cmykReadout = document.getElementById("cmykReadout");
   const colorDropperBtn = document.getElementById("colorDropperBtn");
+  const fillTypeSelect = document.getElementById("fillTypeSelect");
+  const gradientControls = document.getElementById("gradientControls");
+  const gradStop1Btn = document.getElementById("gradStop1Btn");
+  const gradStop2Btn = document.getElementById("gradStop2Btn");
+  const gradStop1Swatch = document.getElementById("gradStop1Swatch");
+  const gradStop2Swatch = document.getElementById("gradStop2Swatch");
+  const gradSwapBtn = document.getElementById("gradSwapBtn");
+  const gradAngleRow = document.getElementById("gradAngleRow");
+  const gradAngleRange = document.getElementById("gradAngleRange");
+  const gradAngleVal = document.getElementById("gradAngleVal");
+  const gradBlendRange = document.getElementById("gradBlendRange");
+  const gradBlendVal = document.getElementById("gradBlendVal");
+  const gradBalanceRange = document.getElementById("gradBalanceRange");
+  const gradBalanceVal = document.getElementById("gradBalanceVal");
   const opacityRange = document.getElementById("opacityRange");
   const opacityLabel = document.getElementById("opacityLabel");
   const addShapeButtons = document.querySelectorAll("[data-shape-kind]");
@@ -1302,6 +1397,82 @@
     return !!layer && (layer.type === "text" || layer.type === "shape");
   }
 
+  // ---- gradient fills: a colorable layer may carry `gradient: { type: "linear"|"radial", ----
+  // ---- angle, color2 }`. `layer.color` stays the start color, so solid-only code paths ----
+  // ---- keep working. `activeStop` (UI-only) says which stop the wheel/inputs/dropper edit. ----
+  let activeStop = 1;
+  let colorSyncLayerId = null;
+  let gradientIdCounter = 0;
+
+  function activeColorView(layer){
+    if (activeStop === 2 && layer.gradient){
+      const c2 = layer.gradient.color2;
+      return { color: c2, fillColor: cmykToHex(c2.c, c2.m, c2.y, c2.k) };
+    }
+    return { color: layer.color, fillColor: layer.fillColor };
+  }
+
+  // writes a color into whichever stop is being edited. The gradient object is replaced
+  // rather than mutated so history snapshots never share it with the live layer.
+  function setActiveColor(layer, c, m, y, k){
+    const color = { c, m, y, k };
+    if (activeStop === 2 && layer.gradient){
+      layer.gradient = Object.assign({}, layer.gradient, { color2: color });
+    } else {
+      layer.color = color;
+      layer.fillColor = cmykToHex(c, m, y, k);
+    }
+  }
+
+  // builds a <linearGradient>/<radialGradient> in the layer's own (unrotated, unscaled)
+  // coordinates — userSpaceOnUse so it rotates/scales with the layer and still works on
+  // zero-height elements like lines, where objectBoundingBox gradients don't render.
+  // (cx, cy) is the content's center and (hw, hh) its half-size in those coordinates.
+  function buildGradientDef(layer, cx, cy, hw, hh){
+    const g = layer.gradient;
+    if (!g) return null;
+    hw = Math.max(hw, 0.5);
+    hh = Math.max(hh, 0.5);
+    const id = `layerGrad${layer.id}_${++gradientIdCounter}`;
+    let el;
+    if (g.type === "radial"){
+      el = document.createElementNS(NS, "radialGradient");
+      el.setAttribute("cx", "0");
+      el.setAttribute("cy", "0");
+      el.setAttribute("r", "1");
+      el.setAttribute("gradientTransform", `translate(${cx} ${cy}) scale(${hw} ${hh})`);
+    } else {
+      // angle 0 runs left -> right, increasing clockwise; the line spans the content's
+      // full extent along that direction (like CSS linear-gradient) so both ends show
+      const rad = (g.angle || 0) * Math.PI / 180;
+      const cos = Math.cos(rad), sin = Math.sin(rad);
+      const half = Math.abs(hw * cos) + Math.abs(hh * sin);
+      el = document.createElementNS(NS, "linearGradient");
+      el.setAttribute("x1", String(cx - half * cos));
+      el.setAttribute("y1", String(cy - half * sin));
+      el.setAttribute("x2", String(cx + half * cos));
+      el.setAttribute("y2", String(cy + half * sin));
+    }
+    el.setAttribute("id", id);
+    el.setAttribute("gradientUnits", "userSpaceOnUse");
+    const c1 = layer.color, c2 = g.color2;
+    // balance = where the 50/50 mix sits (0-1); blend = how much of the span on each side
+    // of it fades (1 = all the way to the ends, 0 = hard edge at the balance point)
+    const mid = Math.max(0, Math.min(100, g.midpoint == null ? 50 : g.midpoint)) / 100;
+    const blend = Math.max(0, Math.min(100, g.blend == null ? 100 : g.blend)) / 100;
+    const startAt = mid * (1 - blend), endAt = mid + (1 - mid) * blend;
+    const mix = cmykToHex((c1.c + c2.c) / 2, (c1.m + c2.m) / 2, (c1.y + c2.y) / 2, (c1.k + c2.k) / 2);
+    [[startAt, layer.fillColor], [mid, mix], [endAt, cmykToHex(c2.c, c2.m, c2.y, c2.k)]].forEach(([offset, color]) => {
+      const stop = document.createElementNS(NS, "stop");
+      stop.setAttribute("offset", String(offset));
+      stop.setAttribute("stop-color", color);
+      el.appendChild(stop);
+    });
+    const defs = document.createElementNS(NS, "defs");
+    defs.appendChild(el);
+    return { defs, paint: `url(#${id})` };
+  }
+
   // ---- layer helpers ----
   function getSelectedLayer(){
     return layers.find((l) => l.id === selectedLayerId) || null;
@@ -1323,6 +1494,7 @@
     const copy = Object.assign({}, layer);
     copy.xform = Object.assign({}, layer.xform);
     if (layer.color) copy.color = Object.assign({}, layer.color);
+    if (layer.gradient) copy.gradient = Object.assign({}, layer.gradient, { color2: Object.assign({}, layer.gradient.color2) });
     return copy;
   }
 
@@ -1364,6 +1536,7 @@
       if (a.xform.rot !== b.xform.rot) return `Rotated layer ${layerLabel(a)}`;
       if (a.opacity !== b.opacity) return `Changed opacity of layer ${layerLabel(a)}`;
       if (JSON.stringify(a.color) !== JSON.stringify(b.color)) return `Changed color of layer ${layerLabel(a)}`;
+      if (JSON.stringify(a.gradient || null) !== JSON.stringify(b.gradient || null)) return `Changed fill of layer ${layerLabel(a)}`;
       if (a.type === "text" && a.text !== b.text) return `Edited text of layer ${layerLabel(a)}`;
       if (a.type === "text" && a.fontFamily !== b.fontFamily) return `Changed font of layer ${layerLabel(a)}`;
       if (a.type === "shape" && (a.shapeKind !== b.shapeKind || a.filled !== b.filled || a.strokeWidth !== b.strokeWidth)) return `Changed style of layer ${layerLabel(a)}`;
@@ -1524,6 +1697,7 @@
     updatePreviewFadeUI();
     historyBeforeSnapshot = null; // never carry a pending drag/typing snapshot across sides
     parseAndLoadBackground(shape.svg); // rebuilds bg + calls buildStage() with `layers` above
+    if (bg) sideGeometry[key] = { cbb: Object.assign({}, bg.clipBBoxRect), unitsPerMM: unitsPerMMForCurrentShape() };
     layers.forEach((l) => updateLayerResolutionFlag(l));
     renderLayerList();
     updateControlsEnabled();
@@ -1644,6 +1818,10 @@
   }
 
   function updateColorReadout(layer){
+    if (layer.type){ // a real layer (vs. the dropper's preview-only {color, fillColor})
+      refreshGradientSwatches(layer);
+      layer = activeColorView(layer);
+    }
     const c = Math.round(layer.color.c), m = Math.round(layer.color.m), y = Math.round(layer.color.y), k = Math.round(layer.color.k);
     cmykReadout.textContent = `C${c} M${m} Y${y} K${k}`;
     colorSwatch.style.background = layer.fillColor;
@@ -1662,8 +1840,7 @@
     const m = clamp(parseFloat(cmykMInput.value));
     const y = clamp(parseFloat(cmykYInput.value));
     const k = clamp(parseFloat(cmykKInput.value));
-    selected.color = { c, m, y, k };
-    selected.fillColor = cmykToHex(c, m, y, k);
+    setActiveColor(selected, c, m, y, k);
     const rgb = { r: 1 - c/100, g: 1 - m/100, b: 1 - y/100 };
     const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
     positionWheelDot(hsv.h, hsv.s);
@@ -1688,9 +1865,15 @@
     if (!isColorableLayer(selected)) return;
     const rgb = hsvToRgb(hue, sat, 1);
     const c = (1 - rgb.r) * 100, m = (1 - rgb.g) * 100, y = (1 - rgb.b) * 100;
-    const k = parseFloat(cmykK.value);
-    selected.color = { c, m, y, k };
-    selected.fillColor = cmykToHex(c, m, y, k);
+    // layers start as pure black (K100), where hue/sat has no visible effect — picking
+    // on the wheel from there drops K to 0 so the chosen color actually shows up.
+    let k = parseFloat(cmykK.value);
+    if (k >= 100){
+      k = 0;
+      cmykK.value = k;
+      cmykKVal.textContent = k + "%";
+    }
+    setActiveColor(selected, c, m, y, k);
     positionWheelDot(hue, sat);
     updateColorReadout(selected);
     buildStage();
@@ -1797,21 +1980,20 @@
     if (commit){
       const selected = getSelectedLayer();
       if (isColorableLayer(selected)){
-        selected.color = { c, m, y, k };
-        selected.fillColor = fillColor;
+        setActiveColor(selected, c, m, y, k);
         buildStage();
       }
       exitColorSampling(false);
     }
   }
 
-  function createTextElement(layer){
+  function createTextElement(layer, paint){
     const textEl = document.createElementNS(NS, "text");
     textEl.setAttribute("x", "0");
     textEl.setAttribute("text-anchor", "middle");
     textEl.setAttribute("font-family", layer.fontFamily);
     textEl.setAttribute("font-size", String(BASE_FONT_SIZE));
-    textEl.setAttribute("fill", layer.fillColor);
+    textEl.setAttribute("fill", paint || layer.fillColor);
     textEl.setAttribute("style", "white-space:pre;");
     const lines = (layer.text || "").split("\n");
     lines.forEach((line, i) => {
@@ -1827,7 +2009,9 @@
   function createTextGroup(layer){
     const g = document.createElementNS(NS, "g");
     g.setAttribute("transform", `translate(${-(layer.textOffsetX||0)} ${-(layer.textOffsetY||0)})`);
-    g.appendChild(createTextElement(layer));
+    const grad = buildGradientDef(layer, layer.textOffsetX || 0, layer.textOffsetY || 0, (layer.naturalW || 0) / 2, (layer.naturalH || 0) / 2);
+    if (grad) g.appendChild(grad.defs);
+    g.appendChild(createTextElement(layer, grad && grad.paint));
     return g;
   }
 
@@ -1879,17 +2063,25 @@
         el.setAttribute("y2", "0");
         break;
     }
-    if (isLine || !filled){
+    const stroked = isLine || !filled;
+    const pad = stroked ? layer.strokeWidth / 2 : 0; // gradient spans the stroke's outer edge too
+    const grad = buildGradientDef(layer, 0, 0, hw + pad, hh + pad);
+    const paint = grad ? grad.paint : layer.fillColor;
+    if (stroked){
       el.setAttribute("fill", "none");
-      el.setAttribute("stroke", layer.fillColor);
+      el.setAttribute("stroke", paint);
       el.setAttribute("stroke-width", String(layer.strokeWidth));
       el.setAttribute("stroke-linecap", "round");
       el.setAttribute("stroke-linejoin", "round");
     } else {
-      el.setAttribute("fill", layer.fillColor);
+      el.setAttribute("fill", paint);
       el.setAttribute("stroke", "none");
     }
-    return el;
+    if (!grad) return el;
+    const wrap = document.createElementNS(NS, "g");
+    wrap.appendChild(grad.defs);
+    wrap.appendChild(el);
+    return wrap;
   }
 
   // measures a text layer's rendered bounding box at BASE_FONT_SIZE so its handles/guide
@@ -3238,7 +3430,141 @@
   }
 
   // ---- layer list UI ----
+  function layerListName(layer){
+    if (layer.type === "text") return "🔤 " + ((layer.text || "Text").split("\n")[0].slice(0, 24) || "Text");
+    if (layer.type === "shape") return "🔷 " + layer.shapeKind.charAt(0).toUpperCase() + layer.shapeKind.slice(1);
+    return layer.name;
+  }
+
+  // the other side(s)' layers, greyed out under this side's list — drag one up into the
+  // list above to copy it onto this side.
+  function renderOtherSideLayers(){
+    otherSideLayersEl.innerHTML = "";
+    Object.keys(BUILTIN_SHAPES).forEach((key) => {
+      if (key === currentSideKey) return;
+      const otherLayers = sides[key] && sides[key].layers;
+      if (!otherLayers || !otherLayers.length) return;
+      const wrap = document.createElement("div");
+      wrap.className = "other-side-layers";
+      const heading = document.createElement("p");
+      heading.className = "other-side-heading";
+      heading.textContent = `${BUILTIN_SHAPES[key].label} — drag a layer up to copy it here`;
+      wrap.appendChild(heading);
+      const ul = document.createElement("ul");
+      ul.className = "layer-list";
+      otherLayers.slice().reverse().forEach((layer) => {
+        const li = document.createElement("li");
+        li.className = "layer-item other-side";
+        li.draggable = true;
+        li.title = `On ${BUILTIN_SHAPES[key].label}. Drag into the list above to copy it to this panel (keeps its size and rotation).`;
+        const handle = document.createElement("span");
+        handle.className = "layer-drag-handle";
+        handle.textContent = "⠿";
+        li.appendChild(handle);
+        const name = document.createElement("span");
+        name.className = "layer-name";
+        name.textContent = layerListName(layer);
+        li.appendChild(name);
+        li.addEventListener("dragstart", (e) => {
+          crossSideDrag = { sideKey: key, layerId: layer.id };
+          li.classList.add("dragging");
+          layerListEl.classList.add("copy-target");
+          e.dataTransfer.effectAllowed = "copy";
+          try{ e.dataTransfer.setData("text/plain", "copy-layer:" + layer.id); }catch(err){ /* ignore */ }
+        });
+        li.addEventListener("dragend", () => {
+          li.classList.remove("dragging");
+          endCrossSideDrag();
+        });
+        ul.appendChild(li);
+      });
+      wrap.appendChild(ul);
+      otherSideLayersEl.appendChild(wrap);
+    });
+  }
+
+  let copyPlaceholder = null;
+  function endCrossSideDrag(){
+    crossSideDrag = null;
+    layerListEl.classList.remove("copy-target");
+    if (copyPlaceholder && copyPlaceholder.parentNode) copyPlaceholder.parentNode.removeChild(copyPlaceholder);
+    copyPlaceholder = null;
+  }
+
+  // shows where the copied layer will land in this side's stacking order
+  layerListEl.addEventListener("dragover", (e) => {
+    if (!crossSideDrag) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    if (!copyPlaceholder){
+      copyPlaceholder = document.createElement("li");
+      copyPlaceholder.className = "layer-item copy-placeholder";
+      copyPlaceholder.textContent = "Copy here";
+    }
+    const items = Array.from(layerListEl.children).filter((el) => el.dataset && el.dataset.id);
+    const before = items.find((el) => {
+      const r = el.getBoundingClientRect();
+      return e.clientY < r.top + r.height / 2;
+    });
+    if (before){
+      if (copyPlaceholder.nextSibling !== before) layerListEl.insertBefore(copyPlaceholder, before);
+    } else if (layerListEl.lastChild !== copyPlaceholder){
+      layerListEl.appendChild(copyPlaceholder);
+    }
+  });
+  layerListEl.addEventListener("drop", (e) => {
+    if (!crossSideDrag) return;
+    e.preventDefault();
+    const drag = crossSideDrag;
+    // position in top-to-bottom list order = how many current layers sit above the placeholder
+    let indexTopToBottom = layers.length;
+    if (copyPlaceholder && copyPlaceholder.parentNode === layerListEl){
+      indexTopToBottom = 0;
+      for (let el = copyPlaceholder.previousSibling; el; el = el.previousSibling){
+        if (el.dataset && el.dataset.id) indexTopToBottom++;
+      }
+    }
+    endCrossSideDrag();
+    copyLayerFromSide(drag.sideKey, drag.layerId, indexTopToBottom);
+  });
+
+  // copies a layer from another side onto this one, keeping its physical size and rotation
+  // and placing it at the same relative spot within this panel's outline
+  function copyLayerFromSide(srcKey, srcId, indexTopToBottom){
+    const src = sides[srcKey] && sides[srcKey].layers.find((l) => l.id === srcId);
+    if (!src || !bg) return;
+    const copy = cloneLayerForHistory(src);
+    copy.id = ++layerIdCounter;
+
+    const dst = { cbb: bg.clipBBoxRect, unitsPerMM: unitsPerMMForCurrentShape() };
+    const from = sideGeometry[srcKey] || dst; // unvisited side: assume the same panel units
+    const unitRatio = (dst.unitsPerMM && from.unitsPerMM) ? dst.unitsPerMM / from.unitsPerMM : 1;
+    const relX = from.cbb.w ? (src.xform.cx - from.cbb.x) / from.cbb.w : 0.5;
+    const relY = from.cbb.h ? (src.xform.cy - from.cbb.y) / from.cbb.h : 0.5;
+    copy.xform = {
+      cx: dst.cbb.x + relX * dst.cbb.w,
+      cy: dst.cbb.y + relY * dst.cbb.h,
+      scale: src.xform.scale * unitRatio,
+      rot: src.xform.rot
+    };
+    // same unit conversion as scale, so the zoom slider reads the same % as the original
+    copy.fitScale = (src.fitScale || 1) * unitRatio;
+
+    const insertAt = Math.max(0, Math.min(layers.length, layers.length - indexTopToBottom));
+    layers.splice(insertAt, 0, copy);
+    selectedLayerId = copy.id;
+    if (copy.type === "image") updateLayerResolutionFlag(copy);
+    renderLayerList();
+    buildStage();
+    syncZoomSlider();
+    syncRotationSlider();
+    updateControlsEnabled();
+    syncTextControls();
+    recordHistory(`Copied layer ${layerLabel(copy)} from ${BUILTIN_SHAPES[srcKey].label}`);
+  }
+
   function renderLayerList(){
+    renderOtherSideLayers();
     layerListEl.innerHTML = "";
     if (!layers.length){
       const empty = document.createElement("div");
@@ -3262,14 +3588,7 @@
 
       const name = document.createElement("span");
       name.className = "layer-name";
-      if (layer.type === "text"){
-        name.textContent = "🔤 " + ((layer.text || "Text").split("\n")[0].slice(0, 24) || "Text");
-      } else if (layer.type === "shape"){
-        const kindLabel = layer.shapeKind.charAt(0).toUpperCase() + layer.shapeKind.slice(1);
-        name.textContent = "🔷 " + kindLabel;
-      } else {
-        name.textContent = layer.name;
-      }
+      name.textContent = layerListName(layer);
       li.appendChild(name);
 
       if (layerHasQualityWarning(layer)){
@@ -3379,12 +3698,44 @@
       if (colorSamplingActive) exitColorSampling(false); // nothing colorable to sample into anymore
       return;
     }
-    const rgb = { r: 1 - selected.color.c/100, g: 1 - selected.color.m/100, b: 1 - selected.color.y/100 };
+    if (selected.id !== colorSyncLayerId){ // a different layer: start back on its first color
+      colorSyncLayerId = selected.id;
+      activeStop = 1;
+    }
+    if (!selected.gradient) activeStop = 1;
+    syncGradientControls(selected);
+    const color = activeColorView(selected).color;
+    const rgb = { r: 1 - color.c/100, g: 1 - color.m/100, b: 1 - color.y/100 };
     const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
     positionWheelDot(hsv.h, hsv.s);
-    cmykK.value = selected.color.k;
-    cmykKVal.textContent = selected.color.k + "%";
+    cmykK.value = color.k;
+    cmykKVal.textContent = Math.round(color.k) + "%";
     updateColorReadout(selected);
+  }
+
+  function syncGradientControls(layer){
+    const g = layer.gradient;
+    fillTypeSelect.value = g ? g.type : "solid";
+    gradientControls.style.display = g ? "" : "none";
+    if (!g) return;
+    gradStop1Btn.classList.toggle("active", activeStop === 1);
+    gradStop2Btn.classList.toggle("active", activeStop === 2);
+    gradAngleRow.style.display = g.type === "linear" ? "" : "none";
+    gradAngleRange.value = g.angle || 0;
+    gradAngleVal.textContent = Math.round(g.angle || 0) + "\u00b0";
+    const blend = g.blend == null ? 100 : g.blend;
+    const mid = g.midpoint == null ? 50 : g.midpoint;
+    gradBlendRange.value = blend;
+    gradBlendVal.textContent = Math.round(blend) + "%";
+    gradBalanceRange.value = mid;
+    gradBalanceVal.textContent = `${Math.round(mid)}/${100 - Math.round(mid)}`;
+  }
+
+  function refreshGradientSwatches(layer){
+    if (!layer.gradient) return;
+    const c2 = layer.gradient.color2;
+    gradStop1Swatch.style.background = layer.fillColor;
+    gradStop2Swatch.style.background = cmykToHex(c2.c, c2.m, c2.y, c2.k);
   }
 
   function syncTextControls(){
@@ -3908,14 +4259,88 @@
     if (!isColorableLayer(selected)) return;
     beginHistoryChange();
     const k = parseFloat(cmykK.value);
-    selected.color.k = k;
-    selected.fillColor = cmykToHex(selected.color.c, selected.color.m, selected.color.y, k);
+    const cur = activeColorView(selected).color;
+    setActiveColor(selected, cur.c, cur.m, cur.y, k);
     cmykKVal.textContent = k + "%";
     updateColorReadout(selected);
     buildStage();
   });
   cmykK.addEventListener("change", () => {
     commitHistoryChange(() => `Changed color of layer ${layerLabel(getSelectedLayer())}`);
+  });
+
+  // ---- events: gradient fill ----
+  fillTypeSelect.addEventListener("change", () => {
+    const selected = getSelectedLayer();
+    if (!isColorableLayer(selected)) return;
+    const type = fillTypeSelect.value;
+    if (type === "solid"){
+      selected.gradient = null;
+      activeStop = 1;
+    } else {
+      const prev = selected.gradient;
+      // default end color: white, or black if the start is already light
+      const lightStart = selected.color.k + Math.max(selected.color.c, selected.color.m, selected.color.y) < 50;
+      selected.gradient = {
+        type,
+        angle: prev ? prev.angle : 0,
+        blend: prev && prev.blend != null ? prev.blend : 100,
+        midpoint: prev && prev.midpoint != null ? prev.midpoint : 50,
+        color2: prev ? Object.assign({}, prev.color2) : (lightStart ? { c:0, m:0, y:0, k:100 } : { c:0, m:0, y:0, k:0 })
+      };
+    }
+    buildStage();
+    syncColorControls();
+    recordHistory(`Changed fill of layer ${layerLabel(selected)}`);
+  });
+
+  function selectGradientStop(stop){
+    if (colorSamplingActive) exitColorSampling(false);
+    activeStop = stop;
+    syncColorControls();
+  }
+  gradStop1Btn.addEventListener("click", () => selectGradientStop(1));
+  gradStop2Btn.addEventListener("click", () => selectGradientStop(2));
+
+  gradSwapBtn.addEventListener("click", () => {
+    const selected = getSelectedLayer();
+    if (!isColorableLayer(selected) || !selected.gradient) return;
+    const start = selected.color;
+    const end = selected.gradient.color2;
+    selected.color = Object.assign({}, end);
+    selected.fillColor = cmykToHex(end.c, end.m, end.y, end.k);
+    const mid = selected.gradient.midpoint == null ? 50 : selected.gradient.midpoint;
+    selected.gradient = Object.assign({}, selected.gradient, { color2: Object.assign({}, start), midpoint: 100 - mid });
+    buildStage();
+    syncColorControls();
+    recordHistory(`Changed fill of layer ${layerLabel(selected)}`);
+  });
+
+  gradAngleRange.addEventListener("input", () => {
+    const selected = getSelectedLayer();
+    if (!isColorableLayer(selected) || !selected.gradient) return;
+    beginHistoryChange();
+    const angle = parseFloat(gradAngleRange.value) || 0;
+    selected.gradient = Object.assign({}, selected.gradient, { angle });
+    gradAngleVal.textContent = Math.round(angle) + "\u00b0";
+    buildStage();
+  });
+  gradAngleRange.addEventListener("change", () => {
+    commitHistoryChange(() => `Changed fill of layer ${layerLabel(getSelectedLayer())}`);
+  });
+
+  [[gradBlendRange, "blend"], [gradBalanceRange, "midpoint"]].forEach(([range, key]) => {
+    range.addEventListener("input", () => {
+      const selected = getSelectedLayer();
+      if (!isColorableLayer(selected) || !selected.gradient) return;
+      beginHistoryChange();
+      selected.gradient = Object.assign({}, selected.gradient, { [key]: parseFloat(range.value) || 0 });
+      syncGradientControls(selected);
+      buildStage();
+    });
+    range.addEventListener("change", () => {
+      commitHistoryChange(() => `Changed fill of layer ${layerLabel(getSelectedLayer())}`);
+    });
   });
 
   // ---- events: color dropper ----
@@ -4464,6 +4889,16 @@
     el.setAttribute("naturalWidth", String(layer.naturalW));
     el.setAttribute("naturalHeight", String(layer.naturalH));
     if (imageFile) el.setAttribute("file", imageFile);
+    if (layer.gradient){
+      el.setAttribute("gradientType", layer.gradient.type);
+      el.setAttribute("gradientAngle", String(layer.gradient.angle || 0));
+      el.setAttribute("gradientBlend", String(layer.gradient.blend == null ? 100 : layer.gradient.blend));
+      el.setAttribute("gradientMidpoint", String(layer.gradient.midpoint == null ? 50 : layer.gradient.midpoint));
+      el.setAttribute("gradientColorC", String(layer.gradient.color2.c));
+      el.setAttribute("gradientColorM", String(layer.gradient.color2.m));
+      el.setAttribute("gradientColorY", String(layer.gradient.color2.y));
+      el.setAttribute("gradientColorK", String(layer.gradient.color2.k));
+    }
 
     if (layer.type === "image"){
       el.setAttribute("name", layer.name || "");
@@ -4987,6 +5422,19 @@
     const k = el.hasAttribute("colorK") ? parseFloat(el.getAttribute("colorK")) : 100;
     const color = { c, m, y, k };
     const fillColor = cmykToHex(c, m, y, k);
+    const gradType = el.getAttribute("gradientType");
+    const gradient = (gradType === "linear" || gradType === "radial") ? {
+      type: gradType,
+      angle: parseFloat(el.getAttribute("gradientAngle")) || 0,
+      blend: el.hasAttribute("gradientBlend") ? parseFloat(el.getAttribute("gradientBlend")) : 100,
+      midpoint: el.hasAttribute("gradientMidpoint") ? parseFloat(el.getAttribute("gradientMidpoint")) : 50,
+      color2: {
+        c: parseFloat(el.getAttribute("gradientColorC")) || 0,
+        m: parseFloat(el.getAttribute("gradientColorM")) || 0,
+        y: parseFloat(el.getAttribute("gradientColorY")) || 0,
+        k: parseFloat(el.getAttribute("gradientColorK")) || 0
+      }
+    } : null;
 
     if (type === "shape"){
       return Promise.resolve({
@@ -4995,7 +5443,7 @@
         shapeKind: el.getAttribute("shapeKind") || "rectangle",
         filled: el.getAttribute("filled") !== "false",
         strokeWidth: parseFloat(el.getAttribute("strokeWidth")) || 6,
-        color, fillColor,
+        color, fillColor, gradient,
         opacity,
         naturalW, naturalH,
         xform,
@@ -5009,7 +5457,7 @@
         id: idAttr,
         type: "text",
         text: contentEl ? contentEl.textContent : "",
-        color, fillColor,
+        color, fillColor, gradient,
         opacity,
         xform,
         fitScale: 1
